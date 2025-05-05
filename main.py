@@ -69,9 +69,22 @@ class Dinosaur:
 
     def draw(self, SCREEN):
         SCREEN.blit(self.image, (self.rect.x, self.rect.y))
-        pygame.draw.rect(SCREEN, self.color, (self.rect.x, self.rect.y, self.rect.width, self.rect.height), 2)
+
+        # Obter a máscara e seu retângulo com base na posição atual
+        mask = self.get_mask()
+        # Encontrar os limites da máscara
+        outline = mask.outline()
+        if outline:
+            # Ajustar as coordenadas do outline para a posição do dinossauro
+            adjusted_outline = [(x + self.rect.x, y + self.rect.y) for x, y in outline]
+            # Desenhar o contorno da máscara
+            pygame.draw.polygon(SCREEN, self.color, adjusted_outline, 2)
+
         for obstacle in obstacles:
             pygame.draw.line(SCREEN, self.color, (self.rect.x + 54, self.rect.y + 12), obstacle.rect.center, 2)
+
+    def get_mask(self):
+        return pygame.mask.from_surface(self.image)
 
 
 class Obstacle:
@@ -89,6 +102,9 @@ class Obstacle:
     def draw(self, SCREEN):
         SCREEN.blit(self.image[self.type], self.rect)
 
+    def get_mask(self):
+        return pygame.mask.from_surface(self.image[self.type])
+
 
 class SmallCactus(Obstacle):
     def __init__(self, image, number_of_cacti):
@@ -102,6 +118,18 @@ class LargeCactus(Obstacle):
         self.rect.y = 300
 
 
+def check_collision(dinosaur, obstacle):
+    """
+    Checks if there is a collision between the dinosaur and the obstacle
+    using pixel-perfect mask collision detection.
+    """
+    dino_mask = dinosaur.get_mask()
+    obstacle_mask = obstacle.get_mask()
+    offset = (obstacle.rect.x - dinosaur.rect.x, obstacle.rect.y - dinosaur.rect.y)
+    collision_point = dino_mask.overlap(obstacle_mask, offset)
+    return collision_point is not None
+
+
 def remove(index):
     dinosaurs.pop(index)
     ge.pop(index)
@@ -109,9 +137,9 @@ def remove(index):
 
 
 def distance(pos_a, pos_b):
-    dx = pos_a[0]-pos_b[0]
-    dy = pos_a[1]-pos_b[1]
-    return math.sqrt(dx**2+dy**2)
+    dx = pos_a[0] - pos_b[0]
+    dy = pos_a[1] - pos_b[1]
+    return math.sqrt(dx ** 2 + dy ** 2)
 
 
 def eval_genomes(genomes, config):
@@ -126,7 +154,7 @@ def eval_genomes(genomes, config):
 
     x_pos_bg = 0
     y_pos_bg = 380
-    game_speed = 20
+    game_speed = 20  # original é 20
 
     for genome_id, genome in genomes:
         dinosaurs.append(Dinosaur())
@@ -139,14 +167,14 @@ def eval_genomes(genomes, config):
         global points, game_speed
         points += 1
         if points % 100 == 0:
-            game_speed += 1
+            game_speed += 1  # Original é 1
         text = FONT.render(f'Points:  {str(points)}', True, (0, 0, 0))
         SCREEN.blit(text, (950, 50))
 
     def statistics():
         global dinosaurs, game_speed, ge
         text_1 = FONT.render(f'Dinosaurs Alive:  {str(len(dinosaurs))}', True, (0, 0, 0))
-        text_2 = FONT.render(f'Generation:  {pop.generation+1}', True, (0, 0, 0))
+        text_2 = FONT.render(f'Generation:  {pop.generation + 1}', True, (0, 0, 0))
         text_3 = FONT.render(f'Game Speed:  {str(game_speed)}', True, (0, 0, 0))
 
         SCREEN.blit(text_1, (50, 450))
@@ -189,14 +217,15 @@ def eval_genomes(genomes, config):
             obstacle.draw(SCREEN)
             obstacle.update()
             for i, dinosaur in enumerate(dinosaurs):
-                if dinosaur.rect.colliderect(obstacle.rect):
+                # Replace rectangle collision with mask collision
+                if check_collision(dinosaur, obstacle):
                     ge[i].fitness -= 1
                     remove(i)
 
         for i, dinosaur in enumerate(dinosaurs):
             output = nets[i].activate((dinosaur.rect.y,
                                        distance((dinosaur.rect.x, dinosaur.rect.y),
-                                        obstacle.rect.midtop)))
+                                                obstacle.rect.midtop)))
             if output[0] > 0.5 and dinosaur.rect.y == dinosaur.Y_POS:
                 dinosaur.dino_jump = True
                 dinosaur.dino_run = False
