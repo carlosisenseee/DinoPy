@@ -1,258 +1,571 @@
+# main.py - Arquivo principal do jogo
 import pygame
 import os
-import random
-import math
 import sys
+import random
 import neat
-
-pygame.init()
-
-# Global Constants
-SCREEN_HEIGHT = 600
-SCREEN_WIDTH = 1100
-SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-
-RUNNING = [pygame.image.load(os.path.join("Assets/Dino", "DinoRun1.png")),
-           pygame.image.load(os.path.join("Assets/Dino", "DinoRun2.png"))]
-
-JUMPING = pygame.image.load(os.path.join("Assets/Dino", "DinoJump.png"))
-
-SMALL_CACTUS = [pygame.image.load(os.path.join("Assets/Cactus", "SmallCactus1.png")),
-                pygame.image.load(os.path.join("Assets/Cactus", "SmallCactus2.png")),
-                pygame.image.load(os.path.join("Assets/Cactus", "SmallCactus3.png"))]
-LARGE_CACTUS = [pygame.image.load(os.path.join("Assets/Cactus", "LargeCactus1.png")),
-                pygame.image.load(os.path.join("Assets/Cactus", "LargeCactus2.png")),
-                pygame.image.load(os.path.join("Assets/Cactus", "LargeCactus3.png"))]
-
-BG = pygame.image.load(os.path.join("Assets/Other", "Track.png"))
-
-FONT = pygame.font.Font('freesansbold.ttf', 20)
+from dinosaur import Dinosaur
+from obstacles import SmallCactus, LargeCactus, Bird
+from game_settings import Settings
+from visualization import plot_stats, draw_neural_network
+import pickle
 
 
-class Dinosaur:
-    X_POS = 80
-    Y_POS = 310
-    JUMP_VEL = 8.5
+class Game:
+    def __init__(self):
+        pygame.init()
+        self.settings = Settings()
+        self.screen = pygame.display.set_mode((self.settings.SCREEN_WIDTH, self.settings.SCREEN_HEIGHT))
+        pygame.display.set_caption("T-Rex Runner NEAT")
+        self.clock = pygame.time.Clock()
 
-    def __init__(self, img=RUNNING[0]):
-        self.image = img
-        self.dino_run = True
-        self.dino_jump = False
-        self.jump_vel = self.JUMP_VEL
-        self.rect = pygame.Rect(self.X_POS, self.Y_POS, img.get_width(), img.get_height())
-        self.color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-        self.step_index = 0
+        # Carregar recursos uma única vez
+        self.load_resources()
 
-    def update(self):
-        if self.dino_run:
-            self.run()
-        if self.dino_jump:
-            self.jump()
-        if self.step_index >= 10:
-            self.step_index = 0
+        # Estatísticas do jogo
+        self.points = 0
+        self.obstacles = []
+        self.dinosaurs = []
+        self.ge = []
+        self.nets = []
 
-    def jump(self):
-        self.image = JUMPING
-        if self.dino_jump:
-            self.rect.y -= self.jump_vel * 4
-            self.jump_vel -= 0.8
-        if self.jump_vel <= -self.JUMP_VEL:
-            self.dino_jump = False
-            self.dino_run = True
-            self.jump_vel = self.JUMP_VEL
+        # Background
+        self.x_pos_bg = 0
+        self.y_pos_bg = 380
 
-    def run(self):
-        self.image = RUNNING[self.step_index // 5]
-        self.rect.x = self.X_POS
-        self.rect.y = self.Y_POS
-        self.step_index += 1
+    def load_resources(self):
+        """Carrega todos os recursos do jogo (imagens, sons)"""
+        self.settings.load_images()
+        # TODO: Adicionar carregamento de sons
 
-    def draw(self, SCREEN):
-        SCREEN.blit(self.image, (self.rect.x, self.rect.y))
+        # Carregar fonte apenas uma vez
+        self.font = pygame.font.Font('freesansbold.ttf', 20)
+        self.large_font = pygame.font.Font('freesansbold.ttf', 30)
 
-        # Obter a máscara e seu retângulo com base na posição atual
-        mask = self.get_mask()
-        # Encontrar os limites da máscara
-        outline = mask.outline()
-        if outline:
-            # Ajustar as coordenadas do outline para a posição do dinossauro
-            adjusted_outline = [(x + self.rect.x, y + self.rect.y) for x, y in outline]
-            # Desenhar o contorno da máscara
-            pygame.draw.polygon(SCREEN, self.color, adjusted_outline, 2)
+        # Carregar fundo
+        self.bg_image = pygame.image.load(os.path.join("Assets/Other", "Track.png"))
 
-        for obstacle in obstacles:
-            pygame.draw.line(SCREEN, self.color, (self.rect.x + 54, self.rect.y + 12), obstacle.rect.center, 2)
+    def draw_background(self):
+        """Desenha o fundo em movimento"""
+        image_width = self.bg_image.get_width()
+        self.screen.blit(self.bg_image, (self.x_pos_bg, self.y_pos_bg))
+        self.screen.blit(self.bg_image, (image_width + self.x_pos_bg, self.y_pos_bg))
 
-    def get_mask(self):
-        return pygame.mask.from_surface(self.image)
+        if self.x_pos_bg <= -image_width:
+            self.x_pos_bg = 0
+        self.x_pos_bg -= self.settings.game_speed
 
+    def draw_statistics(self):
+        """Mostra estatísticas do jogo na tela"""
+        text_1 = self.font.render(f'Dinossauros Vivos: {str(len(self.dinosaurs))}', True, (0, 0, 0))
+        text_2 = self.font.render(f'Geração: {self.population.generation + 1}', True, (0, 0, 0))
+        text_3 = self.font.render(f'Velocidade: {str(self.settings.game_speed)}', True, (0, 0, 0))
 
-class Obstacle:
-    def __init__(self, image, number_of_cacti):
-        self.image = image
-        self.type = number_of_cacti
-        self.rect = self.image[self.type].get_rect()
-        self.rect.x = SCREEN_WIDTH
+        # Adicionar mais informações úteis
+        highest_fitness = max([genome.fitness for genome in self.ge]) if self.ge else 0
+        text_4 = self.font.render(f'Maior Fitness: {highest_fitness:.2f}', True, (0, 0, 0))
 
-    def update(self):
-        self.rect.x -= game_speed
-        if self.rect.x < -self.rect.width:
-            obstacles.pop()
+        self.screen.blit(text_1, (50, 450))
+        self.screen.blit(text_2, (50, 480))
+        self.screen.blit(text_3, (50, 510))
+        self.screen.blit(text_4, (50, 540))
 
-    def draw(self, SCREEN):
-        SCREEN.blit(self.image[self.type], self.rect)
+    def update_score(self):
+        """Atualiza e mostra a pontuação"""
+        self.points += 1
 
-    def get_mask(self):
-        return pygame.mask.from_surface(self.image[self.type])
+        # Aumentar a velocidade progressivamente (ajustado para ser menos abrupto)
+        if self.points % 100 == 0:
+            # Aumentar a velocidade conforme o jogo progride,
+            # mas com um limite máximo para evitar que fique impossível
+            if self.settings.game_speed < self.settings.MAX_GAME_SPEED:
+                self.settings.game_speed += 1 #original 0.5
 
+        # Mostrar pontuação
+        score_text = self.font.render(f'Pontos: {str(self.points)}', True, (0, 0, 0))
+        self.screen.blit(score_text, (950, 50))
 
-class SmallCactus(Obstacle):
-    def __init__(self, image, number_of_cacti):
-        super().__init__(image, number_of_cacti)
-        self.rect.y = 325
+        # Informações adicionais sobre velocidade e pássaros
+        speed_text = self.font.render(f'Velocidade: {self.settings.game_speed:.1f}', True, (0, 100, 0))
+        self.screen.blit(speed_text, (750, 110))
 
+    def generate_obstacles(self):
+        """Gera novos obstáculos com base na pontuação atual"""
+        if len(self.obstacles) == 0:
+            # Determinar quais tipos de obstáculos podem aparecer
+            available_obstacles = []
 
-class LargeCactus(Obstacle):
-    def __init__(self, image, number_of_cacti):
-        super().__init__(image, number_of_cacti)
-        self.rect.y = 300
+            # Cactos sempre estão disponíveis
+            available_obstacles.append(0)  # Small Cactus
+            available_obstacles.append(1)  # Large Cactus
 
+            # Pássaros aparecem apenas após certa pontuação
+            if self.points >= self.settings.BIRD_INTRODUCTION_SCORE:
+                available_obstacles.append(2)  # Bird
 
-def check_collision(dinosaur, obstacle):
-    """
-    Checks if there is a collision between the dinosaur and the obstacle
-    using pixel-perfect mask collision detection.
-    """
-    dino_mask = dinosaur.get_mask()
-    obstacle_mask = obstacle.get_mask()
-    offset = (obstacle.rect.x - dinosaur.rect.x, obstacle.rect.y - dinosaur.rect.y)
-    collision_point = dino_mask.overlap(obstacle_mask, offset)
-    return collision_point is not None
+            # Escolher aleatoriamente entre os obstáculos disponíveis
+            # Controle de frequência: mais cactos no início, mais pássaros depois
+            if self.points > 1000:
+                # Aumentar chance de pássaros em pontuações mais altas
+                chance_modifier = min(0.4, (self.points - 1000) / 5000)
+                weights = [0.3 - chance_modifier / 2, 0.3 - chance_modifier / 2, 0.4 + chance_modifier]
+            else:
+                weights = [0.4, 0.4, 0.2]
 
+            # Filtrando pesos para apenas obstáculos disponíveis
+            final_weights = []
+            final_obstacles = []
 
-def remove(index):
-    dinosaurs.pop(index)
-    ge.pop(index)
-    nets.pop(index)
+            for i, obstacle_type in enumerate(available_obstacles):
+                if i < len(weights):
+                    final_weights.append(weights[i])
+                    final_obstacles.append(obstacle_type)
 
+            # Normalizar pesos
+            total = sum(final_weights)
+            final_weights = [w / total for w in final_weights]
 
-def distance(pos_a, pos_b):
-    dx = pos_a[0] - pos_b[0]
-    dy = pos_a[1] - pos_b[1]
-    return math.sqrt(dx ** 2 + dy ** 2)
+            rand_int = random.choices(final_obstacles, weights=final_weights, k=1)[0]
 
-
-def eval_genomes(genomes, config):
-    global game_speed, x_pos_bg, y_pos_bg, obstacles, dinosaurs, ge, nets, points
-    clock = pygame.time.Clock()
-    points = 0
-
-    obstacles = []
-    dinosaurs = []
-    ge = []
-    nets = []
-
-    x_pos_bg = 0
-    y_pos_bg = 380
-    game_speed = 20  # original é 20
-
-    for genome_id, genome in genomes:
-        dinosaurs.append(Dinosaur())
-        ge.append(genome)
-        net = neat.nn.FeedForwardNetwork.create(genome, config)
-        nets.append(net)
-        genome.fitness = 0
-
-    def score():
-        global points, game_speed
-        points += 1
-        if points % 100 == 0:
-            game_speed += 1  # Original é 1
-        text = FONT.render(f'Points:  {str(points)}', True, (0, 0, 0))
-        SCREEN.blit(text, (950, 50))
-
-    def statistics():
-        global dinosaurs, game_speed, ge
-        text_1 = FONT.render(f'Dinosaurs Alive:  {str(len(dinosaurs))}', True, (0, 0, 0))
-        text_2 = FONT.render(f'Generation:  {pop.generation + 1}', True, (0, 0, 0))
-        text_3 = FONT.render(f'Game Speed:  {str(game_speed)}', True, (0, 0, 0))
-
-        SCREEN.blit(text_1, (50, 450))
-        SCREEN.blit(text_2, (50, 480))
-        SCREEN.blit(text_3, (50, 510))
-
-    def background():
-        global x_pos_bg, y_pos_bg
-        image_width = BG.get_width()
-        SCREEN.blit(BG, (x_pos_bg, y_pos_bg))
-        SCREEN.blit(BG, (image_width + x_pos_bg, y_pos_bg))
-        if x_pos_bg <= -image_width:
-            x_pos_bg = 0
-        x_pos_bg -= game_speed
-
-    run = True
-    while run:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-
-        SCREEN.fill((255, 255, 255))
-
-        for dinosaur in dinosaurs:
-            dinosaur.update()
-            dinosaur.draw(SCREEN)
-
-        if len(dinosaurs) == 0:
-            break
-
-        if len(obstacles) == 0:
-            rand_int = random.randint(0, 1)
+            # Adicionar o obstáculo escolhido
             if rand_int == 0:
-                obstacles.append(SmallCactus(SMALL_CACTUS, random.randint(0, 2)))
+                self.obstacles.append(SmallCactus(
+                    self.settings.SMALL_CACTUS,
+                    random.randint(0, 2)
+                ))
             elif rand_int == 1:
-                obstacles.append(LargeCactus(LARGE_CACTUS, random.randint(0, 2)))
+                self.obstacles.append(LargeCactus(
+                    self.settings.LARGE_CACTUS,
+                    random.randint(0, 2)
+                ))
+            elif rand_int == 2:
+                self.obstacles.append(Bird(
+                    self.settings.BIRD,
+                    height_type=random.randint(0, 2)  # Diferentes alturas para o pássaro
+                ))
 
-        for obstacle in obstacles:
-            obstacle.draw(SCREEN)
-            obstacle.update()
-            for i, dinosaur in enumerate(dinosaurs):
-                # Replace rectangle collision with mask collision
-                if check_collision(dinosaur, obstacle):
-                    ge[i].fitness -= 1
-                    remove(i)
+            # Adicionar distância mínima entre obstáculos baseada na velocidade
+            min_distance = 50 + (self.settings.game_speed * 5)
 
-        for i, dinosaur in enumerate(dinosaurs):
-            output = nets[i].activate((dinosaur.rect.y,
-                                       distance((dinosaur.rect.x, dinosaur.rect.y),
-                                                obstacle.rect.midtop)))
-            if output[0] > 0.5 and dinosaur.rect.y == dinosaur.Y_POS:
-                dinosaur.dino_jump = True
-                dinosaur.dino_run = False
+            # Ajustar posição X do obstáculo para garantir distância mínima
+            self.obstacles[-1].rect.x = self.settings.SCREEN_WIDTH + min_distance
 
-        statistics()
-        score()
-        background()
-        clock.tick(30)
-        pygame.display.update()
+    def remove_dinosaur(self, index):
+        """Remove um dinossauro e seus dados associados quando ele colide"""
+        self.dinosaurs.pop(index)
+        self.ge.pop(index)
+        self.nets.pop(index)
+
+    def eval_genomes(self, genomes, config):
+        """Função principal de avaliação dos genomas"""
+        self.points = 0
+        self.obstacles = []
+        self.dinosaurs = []
+        self.ge = []
+        self.nets = []
+        self.population = neat.Population(config) if not hasattr(self, 'population') else self.population
+
+        # Reiniciar a velocidade do jogo
+        self.settings.game_speed = self.settings.INITIAL_GAME_SPEED
+
+        # Configurar os genomas e redes
+        for genome_id, genome in genomes:
+            self.dinosaurs.append(Dinosaur(self.settings.RUNNING[0], self.settings))
+            self.ge.append(genome)
+            net = neat.nn.FeedForwardNetwork.create(genome, config)
+            self.nets.append(net)
+            genome.fitness = 0
+
+        run = True
+        while run:
+            # Verificar eventos
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        run = False
+                    elif event.key == pygame.K_s:
+                        # Salvar o melhor genoma
+                        self.save_best_genome()
+
+            # Limpar a tela
+            self.screen.fill((255, 255, 255))
+
+            # Atualizar e desenhar dinossauros
+            for dinosaur in self.dinosaurs:
+                dinosaur.update()
+                dinosaur.draw(self.screen)
+
+            # Verificar se todos os dinossauros morreram
+            if len(self.dinosaurs) == 0:
+                break
+
+            # Gerar obstáculos se necessário
+            self.generate_obstacles()
+
+            # Atualizar e desenhar obstáculos
+            for obstacle in list(self.obstacles):  # Usar uma cópia para evitar modificação durante iteração
+                obstacle.draw(self.screen)
+                obstacle.update(self.settings.game_speed)
+
+                # Remover obstáculos que saíram da tela
+                if obstacle.rect.x < -obstacle.rect.width:
+                    self.obstacles.remove(obstacle)
+                    continue
+
+                # Verificar colisões
+                for i, dinosaur in enumerate(list(self.dinosaurs)):  # Usar uma cópia para evitar problemas
+                    if i >= len(self.ge):  # Verificação de segurança
+                        continue
+
+                    if dinosaur.check_collision(obstacle):
+                        # Penalizar por colisão
+                        self.ge[i].fitness -= 1
+                        self.remove_dinosaur(i)
+                        break  # Sair do loop interno após remover
+
+            # Atualizar redes neurais
+            self.update_neural_networks()
+
+            # Desenhar informações do jogo
+            self.draw_statistics()
+            self.update_score()
+            self.draw_background()
+
+            # Limitação de framerate para consistência
+            self.clock.tick(30)
+            pygame.display.update()
+
+    def update_neural_networks(self):
+        """Atualiza as redes neurais para cada dinossauro"""
+        for i, dinosaur in enumerate(list(self.dinosaurs)):
+            if i >= len(self.ge):  # Verificação de segurança
+                continue
+
+            # Recompensar o dinossauro por permanecer vivo
+            self.ge[i].fitness += 0.1
+
+            # Encontrar o obstáculo mais próximo
+            closest_obstacle = None
+            closest_distance = float('inf')
+
+            for obstacle in self.obstacles:
+                # Calcular apenas obstáculos que estão à frente do dinossauro
+                if obstacle.rect.x > dinosaur.rect.x:
+                    distance = obstacle.rect.x - dinosaur.rect.x
+                    if distance < closest_distance:
+                        closest_distance = distance
+                        closest_obstacle = obstacle
+
+            # Definir valores padrão caso não haja obstáculos
+            obstacle_type = 0
+            obstacle_width = 0
+            obstacle_height = 0
+            height_diff = 0
+            distance_x = self.settings.SCREEN_WIDTH
+            distance_normalized = 1.0  # Normalizado entre 0 e 1
+            next_obstacle_distance = self.settings.SCREEN_WIDTH * 2  # Distância para o segundo obstáculo
+            game_speed_normalized = self.settings.game_speed / self.settings.MAX_GAME_SPEED
+
+            # Se temos um obstáculo próximo, obter suas informações
+            if closest_obstacle:
+                if isinstance(closest_obstacle, Bird):
+                    obstacle_type = 2
+                elif isinstance(closest_obstacle, LargeCactus):
+                    obstacle_type = 1
+                else:
+                    obstacle_type = 0
+
+                obstacle_width = closest_obstacle.rect.width
+                obstacle_height = closest_obstacle.rect.height
+                height_diff = dinosaur.rect.y - closest_obstacle.rect.y
+                distance_x = closest_obstacle.rect.x - dinosaur.rect.x
+
+                # Normalizar a distância (ajuda a rede neural)
+                distance_normalized = max(0, min(1, distance_x / self.settings.SCREEN_WIDTH))
+
+                # Encontrar a distância para o próximo obstáculo (se houver)
+                if len(self.obstacles) > 1:
+                    next_obstacles = [o for o in self.obstacles if o.rect.x > closest_obstacle.rect.x]
+                    if next_obstacles:
+                        next_obstacle_distance = next_obstacles[0].rect.x - dinosaur.rect.x
+
+            # Inputs expandidos para a rede neural
+            output = self.nets[i].activate((
+                dinosaur.rect.y / self.settings.SCREEN_HEIGHT,  # Altura normalizada
+                distance_normalized,  # Distância normalizada para o obstáculo mais próximo
+                height_diff / self.settings.SCREEN_HEIGHT,  # Diferença de altura normalizada
+                obstacle_width / self.settings.SCREEN_WIDTH,  # Largura do obstáculo normalizada
+                obstacle_height / self.settings.SCREEN_HEIGHT,  # Altura do obstáculo normalizada
+                obstacle_type / 2,  # Tipo de obstáculo normalizado (0, 0.5, ou 1)
+                next_obstacle_distance / (self.settings.SCREEN_WIDTH * 2),  # Distância para o próximo obstáculo
+                game_speed_normalized,  # Velocidade do jogo normalizada
+                dinosaur.jumping / 1,  # Estado atual de pulo (0 ou 1)
+                dinosaur.ducking / 1  # Estado atual de agachamento (0 ou 1)
+            ))
+
+            # Interpretar as saídas da rede neural
+            if closest_obstacle:
+                # Lógica melhorada para pássaros:
+                if isinstance(closest_obstacle, Bird):
+                    # Verificar a altura do pássaro para decidir entre pular ou agachar
+                    bird_y = closest_obstacle.rect.y
+                    bird_height = closest_obstacle.rect.height
+
+                    # Pássaros mais baixos requerem pulo
+                    if bird_y + bird_height > dinosaur.NORMAL_Y - 30:
+                        if output[0] > 0.5 and dinosaur.rect.y == dinosaur.NORMAL_Y and not dinosaur.jumping:
+                            dinosaur.duck()
+                            # Recompensar o pulo correto para pássaros baixos
+                            self.ge[i].fitness += 0.3 #original = 0.3
+                    # Pássaros mais altos requerem agachamento
+                    else:
+                        if output[1] > 0.5 and not dinosaur.jumping:
+                            dinosaur.duck()
+                            # Recompensar o agachamento correto para pássaros altos
+                            self.ge[i].fitness += 0.5 #original = 0.3
+                        elif output[1] <= 0.5 and dinosaur.ducking:
+                            dinosaur.stop_duck()
+                # Lógica para cactos (sempre pular):
+                else:
+                    # Decidir pular baseado na distância e largura do cacto
+                    jump_threshold = max(0.4, 0.7 - (self.settings.game_speed / 100))
+
+                    # Pular apenas se o obstáculo estiver próximo o suficiente
+                    if distance_x < 250 and output[0] > jump_threshold and dinosaur.rect.y == dinosaur.NORMAL_Y:
+                        dinosaur.jump()
+                        # Recompensar por pular obstáculos corretamente
+                        if not isinstance(closest_obstacle, Bird):
+                            self.ge[i].fitness += 0.2
+
+                    # Penalizar por agachar com cactos (deve pular)
+                    if output[1] > 0.5 and not dinosaur.jumping:
+                        dinosaur.duck()
+                        # Pequena penalização por agachar com cactos
+                        self.ge[i].fitness -= 0.05
+                    elif output[1] <= 0.5 and dinosaur.ducking:
+                        dinosaur.stop_duck()
+
+            # Se não há obstáculos próximos, voltar a correr normalmente
+            else:
+                if dinosaur.ducking:
+                    dinosaur.stop_duck()
+
+    def save_best_genome(self):
+        """Salva o melhor genoma da geração atual"""
+        if not self.ge:
+            return
+
+        best_genome = max(self.ge, key=lambda g: g.fitness)
+
+        with open('best_genome.pkl', 'wb') as f:
+            pickle.dump(best_genome, f)
+
+        print(f"Melhor genoma salvo! Fitness: {best_genome.fitness:.2f}")
+
+    def run_neat(self, config_path, num_generations=50):
+        """Executa o algoritmo NEAT"""
+        # Configurar NEAT
+        config = neat.config.Config(
+            neat.DefaultGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            config_path
+        )
+
+        # Criar população
+        self.population = neat.Population(config)
+
+        # Adicionar reporters para estatísticas
+        self.population.add_reporter(neat.StdOutReporter(True))
+        stats = neat.StatisticsReporter()
+        self.population.add_reporter(stats)
+
+        # Executar NEAT
+        winner = self.population.run(self.eval_genomes, num_generations)
+
+        # Salvar o melhor genoma
+        with open('winner.pkl', 'wb') as f:
+            pickle.dump(winner, f)
+
+        print(f"Melhor genoma: {winner}")
+
+        # Visualizar estatísticas
+        plot_stats(stats, ylog=False, view=True)
+        draw_neural_network(config, winner, view=True)
+
+        return winner
+
+    def run_winner(self, config_path, genome_path='winner.pkl'):
+        """Executa o melhor genoma"""
+        # Carregar configuração
+        config = neat.config.Config(
+            neat.DefaultGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            config_path
+        )
+
+        # Carregar genoma
+        with open(genome_path, 'rb') as f:
+            genome = pickle.load(f)
+
+        # Criar rede neural
+        net = neat.nn.FeedForwardNetwork.create(genome, config)
+
+        # Criar dinossauro
+        dinosaur = Dinosaur(self.settings.RUNNING[0], self.settings)
+
+        # Configuração inicial
+        self.points = 0
+        self.obstacles = []
+        self.settings.game_speed = self.settings.INITIAL_GAME_SPEED
+
+        run = True
+        while run:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+
+            # Limpar a tela
+            self.screen.fill((255, 255, 255))
+
+            # Atualizar e desenhar dinossauro
+            dinosaur.update()
+            dinosaur.draw(self.screen)
+
+            # Gerar obstáculos
+            self.generate_obstacles()
+
+            # Atualizar e desenhar obstáculos
+            for obstacle in list(self.obstacles):
+                obstacle.draw(self.screen)
+                obstacle.update(self.settings.game_speed)
+
+                if obstacle.rect.x < -obstacle.rect.width:
+                    self.obstacles.remove(obstacle)
+
+                # Verificar colisão
+                if dinosaur.check_collision(obstacle):
+                    run = False
+                    break
+
+            # Encontrar o obstáculo mais próximo
+            closest_obstacle = None
+            closest_distance = float('inf')
+
+            for obstacle in self.obstacles:
+                if obstacle.rect.x > dinosaur.rect.x:
+                    distance = obstacle.rect.x - dinosaur.rect.x
+                    if distance < closest_distance:
+                        closest_distance = distance
+                        closest_obstacle = obstacle
+
+            # Definir valores padrão
+            obstacle_type = 0
+            obstacle_width = 0
+            obstacle_height = 0
+            height_diff = 0
+            distance_normalized = 1.0
+            next_obstacle_distance = self.settings.SCREEN_WIDTH * 2
+            game_speed_normalized = self.settings.game_speed / self.settings.MAX_GAME_SPEED
+
+            # Se temos um obstáculo próximo
+            if closest_obstacle:
+                if isinstance(closest_obstacle, Bird):
+                    obstacle_type = 2
+                elif isinstance(closest_obstacle, LargeCactus):
+                    obstacle_type = 1
+                else:
+                    obstacle_type = 0
+
+                obstacle_width = closest_obstacle.rect.width
+                obstacle_height = closest_obstacle.rect.height
+                height_diff = dinosaur.rect.y - closest_obstacle.rect.y
+                distance_x = closest_obstacle.rect.x - dinosaur.rect.x
+
+                # Normalizar a distância
+                distance_normalized = max(0, min(1, distance_x / self.settings.SCREEN_WIDTH))
+
+                # Próximo obstáculo
+                if len(self.obstacles) > 1:
+                    next_obstacles = [o for o in self.obstacles if o.rect.x > closest_obstacle.rect.x]
+                    if next_obstacles:
+                        next_obstacle_distance = next_obstacles[0].rect.x - dinosaur.rect.x
+
+            # Ativar a rede neural
+            output = net.activate((
+                dinosaur.rect.y / self.settings.SCREEN_HEIGHT,
+                distance_normalized,
+                height_diff / self.settings.SCREEN_HEIGHT,
+                obstacle_width / self.settings.SCREEN_WIDTH,
+                obstacle_height / self.settings.SCREEN_HEIGHT,
+                obstacle_type / 2,
+                next_obstacle_distance / (self.settings.SCREEN_WIDTH * 2),
+                game_speed_normalized,
+                dinosaur.jumping / 1,
+                dinosaur.ducking / 1
+            ))
+
+            # Executar ações baseadas na saída da rede
+            if output[0] > 0.5 and dinosaur.rect.y == dinosaur.NORMAL_Y and not dinosaur.jumping:
+                dinosaur.jump()
+
+            if output[1] > 0.5 and not dinosaur.jumping:
+                dinosaur.duck()
+            elif output[1] <= 0.5 and dinosaur.ducking:
+                dinosaur.stop_duck()
+
+            # Desenhar informações do jogo
+            score_text = self.large_font.render(f'Pontuação: {self.points}', True, (0, 0, 0))
+            speed_text = self.font.render(f'Velocidade: {self.settings.game_speed:.1f}', True, (0, 100, 0))
+
+            self.screen.blit(score_text, (self.settings.SCREEN_WIDTH // 2 - 100, 50))
+            self.screen.blit(speed_text, (self.settings.SCREEN_WIDTH // 2 - 100, 100))
+
+            # Atualizar pontuação
+            self.points += 1
+            if self.points % 100 == 0 and self.settings.game_speed < self.settings.MAX_GAME_SPEED:
+                self.settings.game_speed += 0.5
+
+            # Desenhar fundo
+            self.draw_background()
+
+            # Atualizar tela
+            self.clock.tick(30)
+            pygame.display.update()
 
 
-# Setup the NEAT Neural Network
-def run(config_path):
-    global pop
-    config = neat.config.Config(
-        neat.DefaultGenome,
-        neat.DefaultReproduction,
-        neat.DefaultSpeciesSet,
-        neat.DefaultStagnation,
-        config_path
-    )
-
-    pop = neat.Population(config)
-    pop.run(eval_genomes, 50)
-
-
+# dinosaur.py - Classe do dinossauro
+# obstacles.py - Classes para os obstáculos
+# game_settings.py - Configurações do jogo
+# visualization.py - Ferramentas para visualização e estatísticas
+# Arquivo principal para executar o jogo
 if __name__ == '__main__':
-    local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config.txt')
-    run(config_path)
+    import os
+
+    # Inicializar o jogo
+    game = Game()
+
+    # Verificar argumentos de linha de comando
+    import sys
+
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'run_winner':
+            # Executar o melhor genoma treinado
+            config_path = os.path.join(os.path.dirname(__file__), 'config.txt')
+            game.run_winner(config_path)
+        else:
+            print("Comando não reconhecido")
+            print("Uso: python main.py [run_winner]")
+            sys.exit(1)
+    else:
+        # Treinar novo modelo
+        local_dir = os.path.dirname(__file__)
+        config_path = os.path.join(local_dir, 'config.txt')
+        game.run_neat(config_path, num_generations=50)
