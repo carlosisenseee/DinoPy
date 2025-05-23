@@ -1,4 +1,4 @@
-#Chrome Dino com IA em Python
+<h1> Chrome Dino com IA em Python </h1>
 
 Feito por Carlos Alfredo Isensee e Claude.ia
 
