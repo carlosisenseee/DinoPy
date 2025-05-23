@@ -1,16 +1,15 @@
-README: T-Rex Runner com NEAT AI
+#Chrome Dino com IA em Python
+
+Feito por Carlos Alfredo Isensee e Claude.ia
+
 Este projeto implementa uma versão do famoso jogo do dinossauro T-Rex do Chrome, integrado com inteligência artificial usando o algoritmo NEAT (NeuroEvolution of Augmenting Topologies).
 Funcionalidades
-
-Jogo T-Rex Runner:
 
 Sistema de pontuação baseado em distância percorrida
 Obstáculos: cactos pequenos, cactos grandes e pássaros
 Aumento progressivo de dificuldade
 
-
-Inteligência Artificial com NEAT:
-
+# Inteligência Artificial com NEAT:
 Evolução neural para aprender a jogar automaticamente
 Visualização das redes neurais e estatísticas de treinamento
 Possibilidade de salvar e carregar modelos treinados
