@@ -28,6 +28,7 @@ class Game:
         self.dinosaurs = []
         self.ge = []
         self.nets = []
+        self.generation_threshold = 10000
 
         # Background
         self.x_pos_bg = 0
@@ -59,7 +60,7 @@ class Game:
         """Mostra estatísticas do jogo na tela"""
         text_1 = self.font.render(f'Dinossauros Vivos: {str(len(self.dinosaurs))}', True, (0, 0, 0))
         text_2 = self.font.render(f'Geração: {self.population.generation + 1}', True, (0, 0, 0))
-        text_3 = self.font.render(f'Velocidade: {str(self.settings.game_speed)}', True, (0, 0, 0))
+        text_3 = self.font.render(f"Velocidade: {self.settings.game_speed:.1f}", True, (0, 0, 0))
 
         # Adicionar mais informações úteis
         highest_fitness = max([genome.fitness for genome in self.ge]) if self.ge else 0
@@ -72,22 +73,18 @@ class Game:
 
     def update_score(self):
         """Atualiza e mostra a pontuação"""
-        self.points += 1
+        self.points += 1 #Original é 1
 
         # Aumentar a velocidade progressivamente (ajustado para ser menos abrupto)
-        if self.points % 100 == 0:
+        if self.points % 10 == 0: # Original é 100
             # Aumentar a velocidade conforme o jogo progride,
             # mas com um limite máximo para evitar que fique impossível
             if self.settings.game_speed < self.settings.MAX_GAME_SPEED:
-                self.settings.game_speed += 1 #original 0.5
+                self.settings.game_speed += 0.1 #original 0.5
 
         # Mostrar pontuação
         score_text = self.font.render(f'Pontos: {str(self.points)}', True, (0, 0, 0))
         self.screen.blit(score_text, (950, 50))
-
-        # Informações adicionais sobre velocidade e pássaros
-        speed_text = self.font.render(f'Velocidade: {self.settings.game_speed:.1f}', True, (0, 100, 0))
-        self.screen.blit(speed_text, (750, 110))
 
     def generate_obstacles(self):
         """Gera novos obstáculos com base na pontuação atual"""
@@ -202,7 +199,11 @@ class Game:
             if len(self.dinosaurs) == 0:
                 break
 
-            # Gerar obstáculos se necessário
+            # Mata os dinossauros ao chegar em 10k
+            # if self.points >= self.generation_threshold:
+            #     break
+
+                # Gerar obstáculos se necessário
             self.generate_obstacles()
 
             # Atualizar e desenhar obstáculos

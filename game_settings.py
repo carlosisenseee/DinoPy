@@ -12,14 +12,15 @@ class Settings:
 
         # Configurações de jogo
         self.INITIAL_GAME_SPEED = 20
-        self.MAX_GAME_SPEED = 400000000000000000000000  # Limitar velocidade máxima para jogabilidade, original 40
+        self.MAX_GAME_SPEED = 120  # Limitar velocidade máxima para jogabilidade, original 40
         self.game_speed = self.INITIAL_GAME_SPEED
 
         # Quando introduzir os pássaros
         self.BIRD_INTRODUCTION_SCORE = 500
 
         # Configurações visuais
-        self.DEBUG_VISUALS = True  # Mostrar hitboxes e linhas de detecção
+        self.DEBUG_VISUALS = False  # Mostrar hitboxes e linhas de detecção
+        #Original é True
 
         # Para passar referência aos obstáculos para desenho
         self.obstacles = []

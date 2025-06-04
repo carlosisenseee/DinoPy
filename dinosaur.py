@@ -36,6 +36,7 @@ class Dinosaur:
 
     def update(self):
         """Atualiza o estado do dinossauro"""
+
         if self.running:
             self.run()
         if self.jumping:
@@ -57,14 +58,21 @@ class Dinosaur:
         # Ajusta o sprite para pulo
         self.image = self.settings.JUMPING
 
+        #RELER LINHAS ABAIXO PARA TENTAR ARRUMAR O PULO NAS ALTURAS
+
         # Sistema de pulo melhorado com física mais realista
-        speed_factor = self.settings.game_speed / 20  # Normaliza em relação à velocidade inicial
+        # Calcular fator de velocidade com base logarítmica para evitar crescimento excessivo
+        base_speed = self.settings.INITIAL_GAME_SPEED
+        speed_ratio = self.settings.game_speed / base_speed
+        speed_factor = 1 + (speed_ratio - 1) * 0.3  # Crescimento mais controlado
 
-        # Movimento vertical
-        self.rect.y -= self.jump_vel * 4
+        # Movimento vertical ajustado dinamicamente
+        jump_multiplier = 4 * min(speed_factor, 2)  # Limitar o multiplicador máximo Original é 2.5
+        self.rect.y -= self.jump_vel * jump_multiplier
 
-        # Gravidade ajustada dinâmicamente
-        gravity_adjustment = 0.8 * speed_factor
+        # Gravidade ajustada dinamicamente com balanceamento
+        base_gravity = 0.8
+        gravity_adjustment = base_gravity * (1 + (speed_factor - 1) * 0.4)  # Crescimento proporcional mas controlado
         self.jump_vel -= gravity_adjustment
 
         # Verificar se o pulo acabou
